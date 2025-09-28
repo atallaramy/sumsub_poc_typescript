@@ -156,6 +156,16 @@
                 <input type="text" id="userId" placeholder="e.g., user123, john.doe@email.com" required>
             </div>
 
+            <div class="user-input">
+                <label for="levelName">Select verification level:</label>
+                <select id="levelName" style="width: 100%; padding: 0.75rem; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 1rem;">
+                    <option value="basic-kyc-level">Basic KYC Level</option>
+                    <option value="id-only">ID Only</option>
+                    <option value="id-and-liveness" selected>ID and Liveness</option>
+                    <option value="idv-and-phone-verification">IDV and Phone Verification</option>
+                </select>
+            </div>
+
             <button class="btn" id="startVerification">
                 Start Verification Process
             </button>
@@ -188,6 +198,7 @@
             initialScreen: document.getElementById('initial-screen'),
             verificationScreen: document.getElementById('verification-screen'),
             userIdInput: document.getElementById('userId'),
+            levelSelect: document.getElementById('levelName'),
             startBtn: document.getElementById('startVerification'),
             checkStatusBtn: document.getElementById('checkStatus'),
             startOverBtn: document.getElementById('startOver'),
@@ -210,14 +221,14 @@
             }
         }
 
-        async function generateAccessToken(userId) {
+        async function generateAccessToken(userId, levelName) {
             try {
                 const response = await fetch('/api/access-token', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ userId })
+                    body: JSON.stringify({ userId, levelName })
                 });
 
                 if (!response.ok) {
@@ -259,6 +270,7 @@
 
         async function startVerification() {
             const userId = elements.userIdInput.value.trim();
+            const levelName = elements.levelSelect.value;
 
             if (!userId) {
                 showStatus('Please enter a valid user ID', 'error');
@@ -271,7 +283,7 @@
             try {
                 showStatus('Generating secure access token...', 'info');
 
-                const tokenData = await generateAccessToken(userId);
+                const tokenData = await generateAccessToken(userId, levelName);
 
                 // Store user ID for token refresh
                 currentUserId = tokenData.userId;

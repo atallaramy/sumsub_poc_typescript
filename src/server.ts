@@ -44,6 +44,7 @@ interface SumsubTokenResponse {
 
 interface AccessTokenRequestBody {
   userId: string;
+  levelName?: string;
 }
 
 interface AccessTokenResponse {
@@ -112,16 +113,19 @@ async function makeAuthenticatedRequest<T = any>(
 // Generate access token for Web SDK
 app.post('/api/access-token', async (req: Request<{}, AccessTokenResponse, AccessTokenRequestBody>, res: Response<AccessTokenResponse>) => {
   try {
-    const { userId } = req.body;
+    const { userId, levelName } = req.body;
 
     if (!userId) {
       res.status(400).json({ error: 'userId is required' } as any);
       return;
     }
 
+    // Use provided level or fall back to environment default
+    const selectedLevel = levelName || LEVEL_NAME;
+
     // Create applicant first, then generate SDK access token (this was working!)
     const uniqueUserId = `${userId}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    console.log('Creating applicant for user:', uniqueUserId);
+    console.log('Creating applicant for user:', uniqueUserId, 'with level:', selectedLevel);
 
     // Step 1: Create applicant
     const applicantRequest: SumsubApplicantRequest = {
@@ -129,7 +133,7 @@ app.post('/api/access-token', async (req: Request<{}, AccessTokenResponse, Acces
     };
     const applicantResponse = await makeAuthenticatedRequest<SumsubApplicantResponse>(
       'POST',
-      `/resources/applicants?levelName=${LEVEL_NAME}`,
+      `/resources/applicants?levelName=${selectedLevel}`,
       applicantRequest
     );
     const applicantId = applicantResponse.id;
@@ -138,7 +142,7 @@ app.post('/api/access-token', async (req: Request<{}, AccessTokenResponse, Acces
     // Step 2: Generate SDK access token (use userId, not applicantId for SDK!)
     const tokenRequest: SumsubTokenRequest = {
       userId: uniqueUserId,  // SDK tokens need userId, not applicantId
-      levelName: LEVEL_NAME,
+      levelName: selectedLevel,
       ttlInSecs: 1200 // 20 minutes
     };
 
