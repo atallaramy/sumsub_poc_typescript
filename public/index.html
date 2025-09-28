@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sumsub POC - ID Verification</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .title {
+            color: #333;
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .user-input {
+            margin-bottom: 1.5rem;
+        }
+
+        .user-input label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #555;
+            font-weight: 500;
+        }
+
+        .user-input input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        .user-input input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 0.5rem;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .status {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        #sumsub-websdk-container {
+            margin-top: 2rem;
+            min-height: 600px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="initial-screen">
+            <h1 class="title">🔐 ID Verification</h1>
+            <p class="subtitle">Secure identity verification powered by Sumsub</p>
+
+            <div class="user-input">
+                <label for="userId">Enter your unique user ID:</label>
+                <input type="text" id="userId" placeholder="e.g., user123, john.doe@email.com" required>
+            </div>
+
+            <button class="btn" id="startVerification">
+                Start Verification Process
+            </button>
+
+            <div id="status" class="status hidden"></div>
+        </div>
+
+        <div id="verification-screen" class="hidden">
+            <h2>Identity Verification in Progress</h2>
+            <p>Please complete the verification process below:</p>
+            <div id="sumsub-websdk-container"></div>
+
+            <button class="btn" id="checkStatus" style="margin-top: 1rem;">
+                Check Verification Status
+            </button>
+
+            <button class="btn" id="startOver" style="background: #6c757d;">
+                Start Over
+            </button>
+        </div>
+    </div>
+
+    <script src="https://static.sumsub.com/idensic/static/sns-websdk-builder.js"></script>
+    <script>
+        let snsWebSdkInstance = null;
+        let currentUserId = null;
+        let currentApplicantId = null;
+
+        const elements = {
+            initialScreen: document.getElementById('initial-screen'),
+            verificationScreen: document.getElementById('verification-screen'),
+            userIdInput: document.getElementById('userId'),
+            startBtn: document.getElementById('startVerification'),
+            checkStatusBtn: document.getElementById('checkStatus'),
+            startOverBtn: document.getElementById('startOver'),
+            status: document.getElementById('status'),
+            container: document.getElementById('sumsub-websdk-container')
+        };
+
+        function showStatus(message, type = 'info') {
+            elements.status.textContent = message;
+            elements.status.className = `status ${type}`;
+            elements.status.classList.remove('hidden');
+        }
+
+        function setLoading(btn, isLoading) {
+            if (isLoading) {
+                btn.innerHTML = '<span class="loading"></span>Processing...';
+                btn.disabled = true;
+            } else {
+                btn.disabled = false;
+            }
+        }
+
+        async function generateAccessToken(userId) {
+            try {
+                const response = await fetch('/api/access-token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ userId })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate access token');
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('Error generating access token:', error);
+                throw error;
+            }
+        }
+
+        async function getNewAccessToken() {
+            if (!currentUserId) {
+                throw new Error('No user ID available for token refresh');
+            }
+
+            console.log('Refreshing access token for user:', currentUserId);
+
+            // Generate new token for the SAME user
+            const response = await fetch('/api/refresh-token', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ userId: currentUserId })
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to refresh access token');
+            }
+
+            const tokenData = await response.json();
+            return tokenData.token;
+        }
+
+        async function startVerification() {
+            const userId = elements.userIdInput.value.trim();
+
+            if (!userId) {
+                showStatus('Please enter a valid user ID', 'error');
+                return;
+            }
+
+            currentUserId = userId;
+            setLoading(elements.startBtn, true);
+
+            try {
+                showStatus('Generating secure access token...', 'info');
+
+                const tokenData = await generateAccessToken(userId);
+
+                // Store user ID for token refresh
+                currentUserId = tokenData.userId;
+                console.log('Stored user ID for token refresh:', currentUserId);
+
+                showStatus('Initializing verification system...', 'info');
+
+                // Initialize Sumsub WebSDK
+                snsWebSdkInstance = snsWebSdk
+                    .init(tokenData.token, getNewAccessToken)
+                    .withConf({
+                        lang: 'en',
+                        theme: 'light',
+                        onMessage: (type, payload) => {
+                            console.log('WebSDK Message:', type, payload);
+                            handleSdkMessage(type, payload);
+                        },
+                        onError: (error) => {
+                            console.error('WebSDK Error:', error);
+                            showStatus('Verification error: ' + error.message, 'error');
+                        }
+                    })
+                    .build();
+
+                // Switch to verification screen
+                elements.initialScreen.classList.add('hidden');
+                elements.verificationScreen.classList.remove('hidden');
+
+                // Launch the SDK
+                snsWebSdkInstance.launch('#sumsub-websdk-container');
+
+                showStatus('Verification system ready. Please complete the steps above.', 'success');
+
+            } catch (error) {
+                console.error('Initialization error:', error);
+                showStatus('Failed to start verification: ' + error.message, 'error');
+            } finally {
+                elements.startBtn.innerHTML = 'Start Verification Process';
+                elements.startBtn.disabled = false;
+            }
+        }
+
+        function handleSdkMessage(type, payload) {
+            console.log(`SDK Event: ${type}`, payload);
+
+            switch (type) {
+                case 'idCheck.onStepCompleted':
+                    showStatus('Step completed successfully!', 'success');
+                    if (payload.applicantId) {
+                        currentApplicantId = payload.applicantId;
+                    }
+                    break;
+
+                case 'idCheck.onApplicantLoaded':
+                    showStatus('Applicant profile loaded', 'info');
+                    if (payload.applicantId) {
+                        currentApplicantId = payload.applicantId;
+                    }
+                    break;
+
+                case 'idCheck.applicantStatus':
+                    handleApplicantStatus(payload);
+                    break;
+
+                case 'idCheck.onError':
+                    showStatus('Verification error: ' + (payload.message || 'Unknown error'), 'error');
+                    break;
+
+                case 'idCheck.onResubmissionNeeded':
+                    showStatus('Resubmission required. Please follow the instructions above.', 'info');
+                    break;
+            }
+        }
+
+        function handleApplicantStatus(payload) {
+            const status = payload.reviewStatus;
+            console.log('Applicant status:', status);
+
+            switch (status) {
+                case 'completed':
+                    showStatus('✅ Verification completed successfully!', 'success');
+                    break;
+                case 'pending':
+                    showStatus('⏳ Verification is being processed...', 'info');
+                    break;
+                case 'init':
+                    showStatus('📋 Please complete the verification steps above', 'info');
+                    break;
+                default:
+                    showStatus(`Status: ${status}`, 'info');
+            }
+        }
+
+        async function checkVerificationStatus() {
+            if (!currentApplicantId) {
+                showStatus('No applicant ID available yet', 'error');
+                return;
+            }
+
+            setLoading(elements.checkStatusBtn, true);
+
+            try {
+                const response = await fetch(`/api/applicant/${currentApplicantId}`);
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch status');
+                }
+
+                const data = await response.json();
+                console.log('Applicant data:', data);
+
+                const status = data.review?.reviewResult?.reviewAnswer || 'unknown';
+                const reviewStatus = data.review?.reviewStatus || 'unknown';
+
+                showStatus(`Current status: ${reviewStatus} (${status})`, 'info');
+
+            } catch (error) {
+                console.error('Status check error:', error);
+                showStatus('Failed to check status: ' + error.message, 'error');
+            } finally {
+                elements.checkStatusBtn.innerHTML = 'Check Verification Status';
+                elements.checkStatusBtn.disabled = false;
+            }
+        }
+
+
+        // Event listeners
+        elements.startBtn.addEventListener('click', startVerification);
+        elements.checkStatusBtn.addEventListener('click', checkVerificationStatus);
+        elements.startOverBtn.addEventListener('click', startOver);
+
+        elements.userIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                startVerification();
+            }
+        });
+
+        // Auto-generate a fresh user ID for testing
+        function generateFreshUserId() {
+            return `user_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+        }
+
+        window.addEventListener('load', () => {
+            elements.userIdInput.value = generateFreshUserId();
+        });
+
+        // Generate fresh user ID when starting over
+        function startOver() {
+            // Reset state
+            currentUserId = null;
+            currentApplicantId = null;
+            snsWebSdkInstance = null;
+
+            // Clear container
+            elements.container.innerHTML = '';
+
+            // Reset input with fresh ID
+            elements.userIdInput.value = generateFreshUserId();
+
+            // Switch screens
+            elements.verificationScreen.classList.add('hidden');
+            elements.initialScreen.classList.remove('hidden');
+
+            // Clear status
+            elements.status.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>

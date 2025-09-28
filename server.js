@@ -1,0 +1,163 @@
+const express = require('express');
+const cors = require('cors');
+const crypto = require('crypto');
+const path = require('path');
+require('dotenv').config({ path: '.env.local' });
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public'));
+
+// Sumsub API configuration
+const SUMSUB_API_URL = 'https://api.sumsub.com';
+const APP_TOKEN = process.env.SUMSUB_APP_TOKEN;
+const SECRET_KEY = process.env.SUMSUB_SECRET_KEY;
+const LEVEL_NAME = process.env.SUMSUB_LEVEL_NAME || 'basic-kyc-level';
+
+// Function to create HMAC signature for Sumsub API
+function createSignature(timestamp, method, path, body = '') {
+  const message = timestamp + method.toUpperCase() + path + body;
+  return crypto.createHmac('sha256', SECRET_KEY).update(message).digest('hex');
+}
+
+// Function to make authenticated requests to Sumsub API
+async function makeAuthenticatedRequest(method, path, body = null) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const bodyString = body ? JSON.stringify(body) : '';
+  const signature = createSignature(timestamp, method, path, bodyString);
+
+  const headers = {
+    'X-App-Token': APP_TOKEN,
+    'X-App-Access-Ts': timestamp,
+    'X-App-Access-Sig': signature,
+    'Content-Type': 'application/json'
+  };
+
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch(`${SUMSUB_API_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Sumsub API Error:', response.status, errorText);
+      throw new Error(`Sumsub API error: ${response.status} ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Request failed:', error);
+    throw error;
+  }
+}
+
+// Generate access token for Web SDK
+app.post('/api/access-token', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    // Create applicant first, then generate SDK access token (this was working!)
+    const uniqueUserId = `${userId}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    console.log('Creating applicant for user:', uniqueUserId);
+
+    // Step 1: Create applicant
+    const applicantRequest = {
+      externalUserId: uniqueUserId
+    };
+    const applicantResponse = await makeAuthenticatedRequest('POST', `/resources/applicants?levelName=${LEVEL_NAME}`, applicantRequest);
+    const applicantId = applicantResponse.id;
+    console.log('Created applicant with ID:', applicantId);
+
+    // Step 2: Generate SDK access token (use userId, not applicantId for SDK!)
+    const tokenRequest = {
+      userId: uniqueUserId,  // SDK tokens need userId, not applicantId
+      levelName: LEVEL_NAME,
+      ttlInSecs: 1200 // 20 minutes
+    };
+
+    console.log('Generating SDK access token...');
+    const tokenResponse = await makeAuthenticatedRequest('POST', '/resources/accessTokens/sdk', tokenRequest);
+
+    res.json({
+      token: tokenResponse.token,
+      applicantId: applicantId,
+      userId: uniqueUserId
+    });
+  } catch (error) {
+    console.error('Error generating access token:', error);
+    res.status(500).json({
+      error: 'Failed to generate access token',
+      details: error.message
+    });
+  }
+});
+
+// Refresh access token for existing user
+app.post('/api/refresh-token', async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    console.log('Refreshing access token for user:', userId);
+
+    // Generate new SDK access token using userId and levelName
+    const tokenRequest = {
+      userId: userId,
+      levelName: LEVEL_NAME,
+      ttlInSecs: 1200, // 20 minutes
+      applicantIdentifiers: {} // Empty object as required by the API
+    };
+
+    const tokenResponse = await makeAuthenticatedRequest('POST', '/resources/accessTokens/sdk', tokenRequest);
+
+    res.json({
+      token: tokenResponse.token,
+      userId: userId
+    });
+  } catch (error) {
+    console.error('Error refreshing access token:', error);
+    res.status(500).json({
+      error: 'Failed to refresh access token',
+      details: error.message
+    });
+  }
+});
+
+// Get applicant status
+app.get('/api/applicant/:applicantId', async (req, res) => {
+  try {
+    const { applicantId } = req.params;
+    const response = await makeAuthenticatedRequest('GET', `/resources/applicants/${applicantId}/one`);
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching applicant:', error);
+    res.status(500).json({
+      error: 'Failed to fetch applicant',
+      details: error.message
+    });
+  }
+});
+
+// Serve the main HTML file
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Sumsub Level: ${LEVEL_NAME}`);
+  console.log(`Environment: ${process.env.SUMSUB_ENVIRONMENT || 'sandbox'}`);
+});
